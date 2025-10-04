@@ -189,20 +189,20 @@ void print_results(const std::string& name, const BenchmarkConfig& config, const
 
 int main() {
     std::vector<BenchmarkConfig> configs = {
-        // Low contention: few threads, large queue
-        {2, 2, 1000, 10000, 10},
+        // Low contention: few threads
+        {2, 2, 10, 10000, 10},
         
-        // High contention: many threads, small queue
+        // High contention: many threads
         {8, 8, 10, 10000, 1},
         
-        // Bursty: moderate threads, medium queue, large bursts
+        // Bursty: moderate threads, large bursts
         {4, 4, 100, 10000, 50},
         
         // Asymmetric: more producers than consumers
-        {8, 2, 50, 5000, 5},
+        {8, 2, 100, 5000, 5},
         
         // Asymmetric: more consumers than producers
-        {2, 8, 50, 20000, 10},
+        {2, 8, 1000, 20000, 10},
     };
     
     std::vector<BenchmarkResults> all_results;
