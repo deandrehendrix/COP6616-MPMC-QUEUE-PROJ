@@ -36,7 +36,11 @@
 template<typename T>
 class MPMCQueueMutexCV {
 private:
-    std::queue<T> queue_;
+    // Circular buffer storage (fixed capacity)
+    std::vector<T> buffer_;
+    size_t head_ = 0; // next position to deq
+    size_t tail_ = 0; // next position to enq
+    size_t count_ = 0; // number of elements currently stored
     const size_t capacity_;
     mutable std::mutex mutex_;
     std::condition_variable cv_not_full_;
@@ -44,7 +48,8 @@ private:
     bool shutdown_ = false;
 
 public:
-    explicit MPMCQueueMutexCV(size_t capacity) : capacity_(capacity) {}
+    explicit MPMCQueueMutexCV(size_t capacity)
+        : buffer_(capacity), capacity_(capacity) {}
 
     // Producer: Enqueue item
     bool enq(T value) {
@@ -52,13 +57,16 @@ public:
         
         // Wait while queue is full (using condition variable)
         cv_not_full_.wait(lock, [this] {
-            return queue_.size() < capacity_ || shutdown_;
+            return count_ < capacity_ || shutdown_;
         });
         
         if (shutdown_) return false;
-    
-        queue_.push(std::move(value));
-        
+
+        // Insert item into circular buffer
+        buffer_[tail_] = std::move(value);
+        tail_ = (tail_ + 1) % capacity_;
+        ++count_;
+
         // Release the lock before notifying to avoid waking a thread
         // that will immediately block trying to reacquire the mutex
         lock.unlock();
@@ -72,15 +80,16 @@ public:
         
         // Wait while queue is empty (using condition variable)
         cv_not_empty_.wait(lock, [this] {
-            return !queue_.empty() || shutdown_;
+            return count_ > 0 || shutdown_;
         });
         
-        if (shutdown_ && queue_.empty()) return false;
-        
-        value = std::move(queue_.front());
+        if (shutdown_ && count_ == 0) return false;
 
-        queue_.pop();
-        
+        // Remove item from circular buffer
+        value = std::move(buffer_[head_]);
+        head_ = (head_ + 1) % capacity_;
+        --count_;
+
         // Release the lock before notifying to avoid waking a thread
         // that will immediately block trying to reacquire the mutex
         lock.unlock();
@@ -101,7 +110,7 @@ public:
 
     size_t size() const {
         std::lock_guard<std::mutex> lock(mutex_);
-        return queue_.size();
+        return count_;
     }
 };
 
