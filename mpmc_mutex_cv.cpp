@@ -59,8 +59,9 @@ public:
     
         queue_.push(std::move(value));
         
-        // Notify one waiting consumer
-        // This causes a kernel transition to wake up a waiting thread
+        // Release the lock before notifying to avoid waking a thread
+        // that will immediately block trying to reacquire the mutex
+        lock.unlock();
         cv_not_empty_.notify_one();
         return true;
     }
@@ -80,7 +81,9 @@ public:
 
         queue_.pop();
         
-        // Notify one waiting producer
+        // Release the lock before notifying to avoid waking a thread
+        // that will immediately block trying to reacquire the mutex
+        lock.unlock();
         cv_not_full_.notify_one();
         return true;
     }
