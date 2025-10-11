@@ -23,7 +23,6 @@
  */
 
 #include <iostream>
-#include <queue>
 #include <mutex>
 #include <condition_variable>
 #include <thread>
@@ -32,39 +31,39 @@
 #include <atomic>
 #include <random>
 #include <iomanip>
+#include <array>
 
-template<typename T>
+template<typename T, size_t Capacity>
 class MPMCQueueMutexCV {
 private:
-    // Circular buffer
-    std::vector<T> buffer_;
+    // Circular buffer storage (fixed capacity)
+    std::array<T, Capacity> buffer_{};
     size_t head_ = 0;
     size_t tail_ = 0;
-    size_t count_ = 0;
-    const size_t capacity_;
+    // Align hot counter to avoid false sharing
+    alignas(64) size_t count_ = 0;
     mutable std::mutex mutex_;
     std::condition_variable cv_not_full_;
     std::condition_variable cv_not_empty_;
-    bool shutdown_ = false;
+    std::atomic<bool> shutdown_{false};
 
 public:
-    explicit MPMCQueueMutexCV(size_t capacity)
-        : buffer_(capacity), capacity_(capacity) {}
+    MPMCQueueMutexCV() = default;
 
     // Producer: Enqueue item
     bool enq(T value) {
         std::unique_lock<std::mutex> lock(mutex_);
-        
+
         // Wait while queue is full (using condition variable)
         cv_not_full_.wait(lock, [this] {
-            return count_ < capacity_ || shutdown_;
+            return count_ < Capacity || shutdown_.load(std::memory_order_acquire);
         });
-        
-        if (shutdown_) return false;
+
+        if (shutdown_.load(std::memory_order_acquire)) return false;
 
         // Insert item into circular buffer
         buffer_[tail_] = std::move(value);
-        tail_ = (tail_ + 1) % capacity_;
+        tail_ = (tail_ + 1) % Capacity;
         ++count_;
 
         // Release the lock before notifying to avoid waking a thread
@@ -77,17 +76,17 @@ public:
     // Consumer: Dequeue item
     bool deq(T& value) {
         std::unique_lock<std::mutex> lock(mutex_);
-        
+
         // Wait while queue is empty (using condition variable)
         cv_not_empty_.wait(lock, [this] {
-            return count_ > 0 || shutdown_;
+            return count_ > 0 || shutdown_.load(std::memory_order_acquire);
         });
-        
-        if (shutdown_ && count_ == 0) return false;
+
+        if (shutdown_.load(std::memory_order_acquire) && count_ == 0) return false;
 
         // Remove item from circular buffer
         value = std::move(buffer_[head_]);
-        head_ = (head_ + 1) % capacity_;
+        head_ = (head_ + 1) % Capacity;
         --count_;
 
         // Release the lock before notifying to avoid waking a thread
@@ -98,12 +97,8 @@ public:
     }
 
     void shutdown() {
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            shutdown_ = true;
-        }
-
-        // Wake all waiting threads
+        // Set the atomic shutdown flag and wake all waiters
+        shutdown_.store(true, std::memory_order_release);
         cv_not_full_.notify_all();
         cv_not_empty_.notify_all();
     }
@@ -130,8 +125,9 @@ struct BenchmarkResults {
     size_t final_queue_size;
 };
 
+template<size_t Capacity>
 BenchmarkResults run_benchmark(const BenchmarkConfig& config) {
-    MPMCQueueMutexCV<int> queue(config.queue_capacity);
+    MPMCQueueMutexCV<int, Capacity> queue;
     std::atomic<size_t> items_consumed{0};
     std::atomic<bool> producers_done{false};
     
@@ -217,11 +213,14 @@ int main() {
         {2, 8, 1000, 20000, 10},
     };
     
+    constexpr size_t small_capacity = 10;
+    constexpr size_t medium_capacity = 100;
+    constexpr size_t large_capacity = 1000;
     std::vector<BenchmarkResults> all_results;
     all_results.reserve(configs.size());
-    for (size_t i = 0; i < configs.size(); ++i) {
-        all_results.push_back(run_benchmark(configs[i]));
-    }
+    for (size_t i = 0; i < 2; ++i) all_results.push_back(run_benchmark<small_capacity>(configs[i]));
+    for (size_t i = 2; i < 4; ++i) all_results.push_back(run_benchmark<medium_capacity>(configs[i]));
+    for (size_t i = 4; i < configs.size(); ++i) all_results.push_back(run_benchmark<large_capacity>(configs[i]));
 
     // Final consolidated table
     std::cout << "\n------------------------------------------------------------------------------------------\n";

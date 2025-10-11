@@ -184,23 +184,90 @@ def print_comparison(cv: Dict[int, Dict[str, Any]], aw: Dict[int, Dict[str, Any]
         print(f"\nAggregate throughput ratio (AW/CV): {ratio:.2f}")
 
 
+def mean(values: List[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+def stddev(values: List[float]) -> float:
+    if not values:
+        return 0.0
+    m = mean(values)
+    var = sum((x - m) ** 2 for x in values) / len(values)
+    return var ** 0.5
+
+
 def main() -> None:
+    REPEATS = 5
     # 1) Rebuild both binaries
     build(MUTEX_SRC, MUTEX_EXE)
     build(ATOMIC_SRC, ATOMIC_EXE)
-    # 2) Run & capture
-    cv_out = run_binary(MUTEX_EXE)
-    aw_out = run_binary(ATOMIC_EXE)
-    # 3) Parse
-    cv_res = parse_results(cv_out)
-    aw_res = parse_results(aw_out)
-    # Fallback to final-table parsing if legacy markers absent
-    if not cv_res:
-        cv_res = parse_final_table(cv_out)
-    if not aw_res:
-        aw_res = parse_final_table(aw_out)
-    # 4) Print comparison
-    print_comparison(cv_res, aw_res)
+
+    # 2) Run both binaries REPEATS times and collect outputs
+    cv_runs: List[str] = []
+    aw_runs: List[str] = []
+    for i in range(REPEATS):
+        print(f"\n[run {i+1}/{REPEATS}] mutex+cv")
+        cv_runs.append(run_binary(MUTEX_EXE))
+        print(f"[run {i+1}/{REPEATS}] atomic_wait")
+        aw_runs.append(run_binary(ATOMIC_EXE))
+
+    # 3) Parse runs into per-test aggregated stats
+    # We'll parse final-table format; fall back to line-based parsing if needed
+    def aggregate_runs(runs: List[str]) -> Dict[int, Dict[str, Any]]:
+        per_test: Dict[int, Dict[str, Any]] = {}
+        for out in runs:
+            parsed = parse_final_table(out)
+            if not parsed:
+                parsed = parse_results(out)
+            for tid, row in parsed.items():
+                entry = per_test.setdefault(tid, {
+                    'Test': tid,
+                    'Producers': row.get('Producers'),
+                    'Consumers': row.get('Consumers'),
+                    'Burst': row.get('Burst'),
+                    'Durations': [],
+                    'Throughputs': [],
+                })
+                entry['Durations'].append(row.get('DurationMs', 0.0))
+                entry['Throughputs'].append(row.get('Throughput', 0.0))
+        # Convert to mean/stddev
+        summary: Dict[int, Dict[str, Any]] = {}
+        for tid, v in per_test.items():
+            summary[tid] = {
+                'Test': tid,
+                'Producers': v['Producers'],
+                'Consumers': v['Consumers'],
+                'Burst': v['Burst'],
+                'DurationMs': mean(v['Durations']),
+                'DurationStdMs': stddev(v['Durations']),
+                'Throughput': mean(v['Throughputs']),
+                'ThroughputStd': stddev(v['Throughputs']),
+            }
+        return summary
+
+    cv_res = aggregate_runs(cv_runs)
+    aw_res = aggregate_runs(aw_runs)
+
+    # 4) Print comparison (adapted to show mean/stddev)
+    print('\n=== AGGREGATED RESULTS (means over {} runs) ==='.format(REPEATS))
+    all_tests = sorted(set(cv_res.keys()) & set(aw_res.keys()))
+    print('\n' + '-' * 120)
+    print('COMPARISON: mutex+cv (mean±std) vs atomic_wait (mean±std)')
+    print('-' * 120)
+    hdr = f"{'Test':<6} {'P':>3} {'C':>3} {'Burst':>5} | {'DurCV(ms)':>12} {'±':>2} {'DurAW(ms)':>12} {'±':>2} | {'ThrCV/s':>10} {'±':>5} {'ThrAW/s':>10} {'±':>5} | {'AW/CV':>6}"
+    print(hdr)
+    print('-' * 120)
+    for t in all_tests:
+        a = cv_res[t]; b = aw_res[t]
+        P = b['Producers'] or a['Producers']
+        C = b['Consumers'] or a['Consumers']
+        B = b['Burst'] or a['Burst']
+        dcv = a['DurationMs']; sd_cv = a['DurationStdMs']
+        daw = b['DurationMs']; sd_aw = b['DurationStdMs']
+        tcv = a['Throughput']; s_tc = a['ThroughputStd']
+        taw = b['Throughput']; s_ta = b['ThroughputStd']
+        ratio = (taw / tcv) if (tcv and taw) else float('nan')
+        print(f"{t:<6} {P:>3} {C:>3} {B:>5} | {dcv:12.2f} {sd_cv:2.2f} {daw:12.2f} {sd_aw:2.2f} | {int(tcv):10,} {int(s_tc):5,} {int(taw):10,} {int(s_ta):5,} | {ratio:6.2f}")
+    print('-' * 120)
 
 if __name__ == "__main__":
     main()
