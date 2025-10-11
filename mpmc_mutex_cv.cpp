@@ -36,11 +36,11 @@
 template<typename T>
 class MPMCQueueMutexCV {
 private:
-    // Circular buffer storage (fixed capacity)
+    // Circular buffer
     std::vector<T> buffer_;
-    size_t head_ = 0; // next position to deq
-    size_t tail_ = 0; // next position to enq
-    size_t count_ = 0; // number of elements currently stored
+    size_t head_ = 0;
+    size_t tail_ = 0;
+    size_t count_ = 0;
     const size_t capacity_;
     mutable std::mutex mutex_;
     std::condition_variable cv_not_full_;
