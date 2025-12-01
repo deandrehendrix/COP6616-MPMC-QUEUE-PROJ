@@ -32,6 +32,7 @@
 #include <random>
 #include <iomanip>
 #include <array>
+#include <string>
 
 template<typename T, size_t Capacity>
 class MPMCQueueMutexCV {
@@ -113,7 +114,6 @@ public:
 struct BenchmarkConfig {
     size_t num_producers;
     size_t num_consumers;
-    size_t queue_capacity;
     size_t items_per_producer;
     size_t burst_size;
 };
@@ -191,68 +191,25 @@ BenchmarkResults run_benchmark(const BenchmarkConfig& config) {
     return results;
 }
 
-void print_results(const std::string& name, const BenchmarkConfig& config, const BenchmarkResults& results) {
-    // no-op: legacy single-test printer retained for compatibility if needed
+void output_csv(const BenchmarkResults& results) {
+    std::cout << "duration_ms,throughput/s\n";
+    std::cout << results.duration_ms << "," << results.throughput_items_per_sec << "\n";
 }
 
-int main() {
-    std::vector<BenchmarkConfig> configs = {
-        // Low contention: few threads
-        {2, 2, 10, 10000, 10},
-        
-        // High contention: many threads
-        {8, 8, 10, 10000, 1},
-        
-        // Bursty: moderate threads, large bursts
-        {4, 4, 100, 10000, 50},
-        
-        // Asymmetric: more producers than consumers
-        {8, 2, 100, 5000, 5},
-        
-        // Asymmetric: more consumers than producers
-        {2, 8, 1000, 20000, 10},
-    };
-    
-    constexpr size_t small_capacity = 10;
-    constexpr size_t medium_capacity = 100;
-    constexpr size_t large_capacity = 1000;
-    std::vector<BenchmarkResults> all_results;
-    all_results.reserve(configs.size());
-    for (size_t i = 0; i < 2; ++i) all_results.push_back(run_benchmark<small_capacity>(configs[i]));
-    for (size_t i = 2; i < 4; ++i) all_results.push_back(run_benchmark<medium_capacity>(configs[i]));
-    for (size_t i = 4; i < configs.size(); ++i) all_results.push_back(run_benchmark<large_capacity>(configs[i]));
-
-    // Final consolidated table
-    std::cout << "\n------------------------------------------------------------------------------------------\n";
-    std::cout << "FINAL SUMMARY (Mutex+CV)" << std::endl;
-    std::cout << "------------------------------------------------------------------------------------------\n";
-    std::cout << std::left << std::setw(6) << "Test"
-              << std::right << std::setw(4) << "P"
-              << std::setw(4) << "C"
-              << std::setw(10) << "Capacity"
-              << std::setw(7) << "Burst"
-              << std::setw(14) << "Duration(ms)"
-              << std::setw(16) << "Throughput/s"
-              << std::setw(10) << "FinalQ" << std::endl;
-    std::cout << "------------------------------------------------------------------------------------------\n";
-    double agg_thr = 0.0;
-    for (size_t i = 0; i < configs.size(); ++i) {
-        const auto& cfg = configs[i];
-        const auto& r = all_results[i];
-        agg_thr += r.throughput_items_per_sec;
-        std::cout << std::left << std::setw(6) << (i + 1)
-                  << std::right << std::setw(4) << cfg.num_producers
-                  << std::setw(4) << cfg.num_consumers
-                  << std::setw(10) << cfg.queue_capacity
-                  << std::setw(7) << cfg.burst_size
-                  << std::setw(14) << std::fixed << std::setprecision(2) << r.duration_ms
-                  << std::setw(16) << std::fixed << std::setprecision(0) << r.throughput_items_per_sec
-                  << std::setw(10) << r.final_queue_size
-                  << std::endl;
+int main(int argc, char **argv) {
+    if (argc != 5) {
+        std::cerr << "Usage: " << argv[0] << " <producers> <consumers> <items/producer> <burst_size>\n";
+        return 1;
     }
-    std::cout << "------------------------------------------------------------------------------------------\n";
-    std::cout << "Aggregate throughput (items/sec): " << std::fixed << std::setprecision(0) << agg_thr << std::endl;
-    std::cout << "------------------------------------------------------------------------------------------\n";
-    
-    return 0;
+
+    BenchmarkConfig config {
+        std::stoul(argv[1]),
+        std::stoul(argv[2]),
+        std::stoul(argv[3]),
+        std::stoul(argv[4])
+    };
+
+    constexpr size_t capacity = 1000;
+    BenchmarkResults results = run_benchmark<capacity>(config);
+    output_csv(results);
 }

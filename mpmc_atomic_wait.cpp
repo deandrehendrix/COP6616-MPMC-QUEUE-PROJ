@@ -27,6 +27,7 @@
 #include <iomanip>
 #include <array>
 #include <mutex>
+#include <string>
 
 // Hybrid design: data protected by a small mutex, sleeping done via atomic_wait
 // rather than condition_variable. This removes most lock-free complexity while
@@ -201,82 +202,25 @@ BenchmarkResults run_benchmark(const BenchmarkConfig& config) {
     return results;
 }
 
-void print_results(const std::string& name, const BenchmarkConfig& config, const BenchmarkResults& results) {
-    std::cout << "\n=== " << name << " ===" << std::endl;
-    std::cout << "Config: " << config.num_producers << " producers, " 
-              << config.num_consumers << " consumers, "
-              << "burst=" << config.burst_size << std::endl;
-    std::cout << "Duration: " << std::fixed << std::setprecision(2) 
-              << results.duration_ms << " ms" << std::endl;
-    std::cout << "Total items: " << results.total_items << std::endl;
-    std::cout << "Throughput: " << std::fixed << std::setprecision(0) 
-              << results.throughput_items_per_sec << " items/sec" << std::endl;
-    std::cout << "Final queue size: " << results.final_queue_size << std::endl;
+void output_csv(const BenchmarkResults& results) {
+    std::cout << "duration_ms,throughput/s\n";
+    std::cout << results.duration_ms << "," << results.throughput_items_per_sec << "\n";
 }
 
-int main() {
-    // Header suppressed for clean batch output
-    
-    std::vector<BenchmarkConfig> configs = {
-        // Low contention: few threads
-        {2, 2, 10000, 10},
-        
-        // High contention: many threads
-        {8, 8, 10000, 1},
-        
-        // Bursty workload
-        {4, 4, 10000, 50},
-        
-        // Asymmetric: more producers
-        {8, 2, 5000, 5},
-        
-        // Asymmetric: more consumers
-        {2, 8, 20000, 10},
-    };
-    
-    constexpr size_t small_capacity = 10;
-    constexpr size_t medium_capacity = 100;
-    constexpr size_t large_capacity = 1000;
-    
-    std::vector<BenchmarkResults> all_small; all_small.reserve(2);
-    std::vector<BenchmarkResults> all_medium; all_medium.reserve(2);
-    std::vector<BenchmarkResults> all_large; all_large.reserve(1);
-    for (size_t i = 0; i < 2; ++i) all_small.push_back(run_benchmark<small_capacity>(configs[i]));
-    for (size_t i = 2; i < 4; ++i) all_medium.push_back(run_benchmark<medium_capacity>(configs[i]));
-    for (size_t i = 4; i < configs.size(); ++i) all_large.push_back(run_benchmark<large_capacity>(configs[i]));
+int main(int argc, char **argv) {
+    if (argc != 5) {
+        std::cerr << "Usage: " << argv[0] << " <producers> <consumers> <items/producer> <burst_size>\n";
+        return 1;
+    }
 
-    // Consolidated table
-    std::cout << "\n------------------------------------------------------------------------------------------\n";
-    std::cout << "FINAL SUMMARY (atomic_wait)" << std::endl;
-    std::cout << "------------------------------------------------------------------------------------------\n";
-    std::cout << std::left << std::setw(6) << "Test"
-              << std::right << std::setw(4) << "P"
-              << std::setw(4) << "C"
-              << std::setw(10) << "Capacity"
-              << std::setw(7) << "Burst"
-              << std::setw(14) << "Duration(ms)"
-              << std::setw(16) << "Throughput/s"
-              << std::setw(10) << "FinalQ" << std::endl;
-    std::cout << "------------------------------------------------------------------------------------------\n";
-    auto emit_row = [](size_t test_index, const BenchmarkConfig& cfg, const BenchmarkResults& r) {
-        std::cout << std::left << std::setw(6) << test_index
-                  << std::right << std::setw(4) << cfg.num_producers
-                  << std::setw(4) << cfg.num_consumers
-                  << std::setw(10) << (test_index <= 2 ? 10 : (test_index <= 4 ? 100 : 1000))
-                  << std::setw(7) << cfg.burst_size
-                  << std::setw(14) << std::fixed << std::setprecision(2) << r.duration_ms
-                  << std::setw(16) << std::fixed << std::setprecision(0) << r.throughput_items_per_sec
-                  << std::setw(10) << r.final_queue_size
-                  << std::endl;
+    BenchmarkConfig config {
+        std::stoul(argv[1]),
+        std::stoul(argv[2]),
+        std::stoul(argv[3]),
+        std::stoul(argv[4])
     };
-    double agg_thr = 0.0;
-    size_t test_no = 1;
-    for (size_t i = 0; i < all_small.size(); ++i, ++test_no) { agg_thr += all_small[i].throughput_items_per_sec; emit_row(test_no, configs[i], all_small[i]); }
-    for (size_t i = 0; i < all_medium.size(); ++i, ++test_no) { agg_thr += all_medium[i].throughput_items_per_sec; emit_row(test_no, configs[2 + i], all_medium[i]); }
-    for (size_t i = 0; i < all_large.size(); ++i, ++test_no) { agg_thr += all_large[i].throughput_items_per_sec; emit_row(test_no, configs[4 + i], all_large[i]); }
-    std::cout << "------------------------------------------------------------------------------------------\n";
-    std::cout << "Aggregate throughput (items/sec): " << std::fixed << std::setprecision(0) << agg_thr << std::endl;
-    std::cout << "------------------------------------------------------------------------------------------\n";
-    
-    return 0;
+
+    constexpr size_t capacity = 1000;
+    BenchmarkResults results = run_benchmark<capacity>(config);
+    output_csv(results);
 }
