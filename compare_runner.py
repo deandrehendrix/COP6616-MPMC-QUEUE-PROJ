@@ -165,12 +165,12 @@ def main():
     # ------------------------------------------
     # BASE CONFIG — everything varies from this
     # ------------------------------------------
-    BASE = (4, 4, 1_000, 10)
+    BASE = (8, 8, 1_000, 10)
     base_P, base_C, base_items, base_burst = BASE
 
     # Sweeps modifying one param at a time
-    SWEEP_P = [(p, base_C, base_items, base_burst) for p in [1, 2, 4, 8]]
-    SWEEP_C = [(base_P, c, base_items, base_burst) for c in [1, 2, 4, 8]]
+    SWEEP_P = [(p, base_C, base_items, base_burst) for p in [2, 4, 8, 16, 32]]
+    SWEEP_C = [(base_P, c, base_items, base_burst) for c in [2, 4, 8, 16, 32]]
     SWEEP_ITEMS = [(base_P, base_C, it, base_burst) for it in [100, 1_000, 5_000, 10_000]]
     SWEEP_BURST = [(base_P, base_C, base_items, b) for b in [1, 2, 4, 8, 16, 32]]
 
