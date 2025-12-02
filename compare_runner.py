@@ -15,20 +15,29 @@ This script:
   • Outputs mean ± stddev comparison tables
 """
 
-from __future__ import annotations
 import subprocess
 import shutil
 from pathlib import Path
 from typing import List, Tuple, Dict
 import math
+import pandas as pd
+import matplotlib.pyplot as plt
+import tabulate as tb
 
 ROOT = Path(__file__).parent
 GPP = shutil.which("g++") or "g++"
+
+DATA_DIR = ROOT / "data"
+if not DATA_DIR.exists():
+    DATA_DIR.mkdir()
 
 MUTEX_SRC = ROOT / "mpmc_mutex_cv.cpp"
 ATOMIC_SRC = ROOT / "mpmc_atomic_wait.cpp"
 MUTEX_EXE = ROOT / "mpmc_mutex_cv.exe"
 ATOMIC_EXE = ROOT / "mpmc_atomic_wait.exe"
+
+# these control column names in tables
+P="P"; C="C"; ITEMS_PER_PRODUCER="I"; B="B"
 
 # ----------------------------------------------------------------------
 # Utility
@@ -57,7 +66,44 @@ def stddev(xs: List[float]) -> float:
     return math.sqrt(sum((x - m)**2 for x in xs) / len(xs))
 
 # ----------------------------------------------------------------------
-# Printing
+# Output for paper
+# ----------------------------------------------------------------------
+
+def make_dataframe(results_cv, results_aw, changing_param):
+    # fragile... must match order in main()
+    param_idx = { P:0, C:1, ITEMS_PER_PRODUCER: 2, B: 3 }[changing_param] 
+
+    THR_CV = "CV Thru."
+    THR_AW = "AW Thru."
+    RATIO = "AW/CV"
+
+    data = { changing_param: [], THR_CV: [], THR_AW: [] } # RATIO col is added thru pandas
+    
+    data[changing_param] = [ row['params'][param_idx] for row in results_aw.values() ]
+    data[THR_CV] = [ row['ThrMean'] for row in results_cv.values() ]
+    data[THR_AW] = [ row['ThrMean'] for row in results_aw.values() ]
+
+    df = pd.DataFrame.from_dict(data)
+    df[RATIO] = df[THR_AW] / df[THR_CV]
+    return df
+
+def save_table(df, filename_prefix):
+    output_file = DATA_DIR / (filename_prefix + ".tex")
+    table = tb.tabulate(df, showindex=False, headers='keys', tablefmt='latex_booktabs')
+    with open(output_file, 'w') as f:
+        f.write(table)
+
+def save_plot(df, filename_prefix):
+    output_file = DATA_DIR / (filename_prefix + ".png")
+    x_col = df.columns[0]
+    df.plot(x=x_col, y=["CV Thru.", "AW Thru."], marker="o", title=f"Throughput vs. {x_col}")
+    plt.ylabel("Throughput")
+    plt.grid(True)
+    plt.tight_layout()
+    plt.savefig(str(output_file))
+
+# ----------------------------------------------------------------------
+# Console output
 # ----------------------------------------------------------------------
 
 def print_block(title: str, results_cv, results_aw, repeats: int):
@@ -88,7 +134,6 @@ def print_block(title: str, results_cv, results_aw, repeats: int):
         b = results_aw[tid]
 
         P, C, itemsPerProducer, B = a["params"]
-        items_per_c = itemsPerProducer // C if C > 0 else 0
 
         dcv, scv = a["DurationMean"], a["DurationStd"]
         daw, saw = b["DurationMean"], b["DurationStd"]
@@ -189,21 +234,33 @@ def main():
     # 1) Producer sweep
     print("Testing with varying P")
     cv, aw = run_sweep(SWEEP_P, REPEATS)
+    dataframe = make_dataframe(cv, aw, P)
+    save_table(dataframe, "producers_sweep")
+    save_plot(dataframe, "producers_sweep")
     print_block("Producer Sweep (vary P)", cv, aw, REPEATS)
 
     # 2) Consumer sweep
     print("Testing with varying C")
     cv, aw = run_sweep(SWEEP_C, REPEATS)
+    dataframe = make_dataframe(cv, aw, C)
+    save_table(dataframe, "consumers_sweep")
+    save_plot(dataframe, "consumers_sweep")
     print_block("Consumer Sweep (vary C)", cv, aw, REPEATS)
 
     # 3) Items-per-producer sweep
     print("Testing with varying items/producer")
     cv, aw = run_sweep(SWEEP_ITEMS, REPEATS)
+    dataframe = make_dataframe(cv, aw, ITEMS_PER_PRODUCER)
+    save_table(dataframe, "items_sweep")
+    save_plot(dataframe, "items_sweep")
     print_block("Items-per-Producer Sweep (vary items/producer)", cv, aw, REPEATS)
 
     # 4) Burst sweep
     print("Testing with varying burst")
     cv, aw = run_sweep(SWEEP_BURST, REPEATS)
+    dataframe = make_dataframe(cv, aw, B)
+    save_table(dataframe, "bursts_sweep")
+    save_plot(dataframe, "bursts_sweep")
     print_block("Burst Sweep (vary burst)", cv, aw, REPEATS)
 
 
